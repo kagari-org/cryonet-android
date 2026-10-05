@@ -1,2 +1,11 @@
 /.direnv
 /result
+/.cache
+/native
+/build
+/.gradle
+/.kotlin
+**/build/
+local.properties
+*.iml
+.idea/
