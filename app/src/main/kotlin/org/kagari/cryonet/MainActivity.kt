@@ -50,7 +50,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.kagari.cryonet.ui.CryonetTheme
+import uniffi.cryonet_uapi.Conn
 import uniffi.cryonet_uapi.ConnState
+import uniffi.cryonet_uapi.IgpRoute
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: ConfigStore
@@ -141,7 +143,7 @@ private fun CryonetScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(SectionSpacing),
         ) {
-            item {
+            item(key = "status") {
                 StatusCard(
                     status = status,
                     localError = localError,
@@ -163,18 +165,15 @@ private fun CryonetScreen(
                     onStop = onStop,
                 )
             }
-            item { ConnectionSection(config, update) }
-            item { TunnelSection(config, update) }
-            item { IceSection(config, update) }
-            item { OptionsSection(config, update) }
+            item(key = "connection") { ConnectionSection(config, update) }
+            item(key = "tunnel") { TunnelSection(config, update) }
+            item(key = "ice") { IceSection(config, update) }
+            item(key = "options") { OptionsSection(config, update) }
             if (status.running) {
-                // MeshDetails emits several cards; they live in a single lazy
-                // item, so it needs its own spacing between them.
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(SectionSpacing)) {
-                        MeshDetails(status)
-                    }
-                }
+                item(key = "links") { LinksSection(status.links) }
+                item(key = "peers") { PeersSection(status.peers) }
+                item(key = "mesh-routes") { MeshRoutesSection(status.routes) }
+                item(key = "igp-routes") { IgpRoutesSection(status.igpRoutes) }
             }
         }
     }
@@ -334,16 +333,20 @@ private fun OptionsSection(
 }
 
 @Composable
-private fun MeshDetails(status: CryonetStatus) {
-    val colorScheme = MaterialTheme.colorScheme
+private fun LinksSection(links: List<UInt>) {
     DataSection(
-        title = "Links (${status.links.size})",
+        title = "Links (${links.size})",
         header = "NODE",
-        rows = status.links.map { DataRow(formatNodeId(it)) },
+        rows = links.map { DataRow(formatNodeId(it)) },
         emptyText = "No links yet",
     )
+}
+
+@Composable
+private fun PeersSection(peers: Map<UInt, Conn>) {
+    val colorScheme = MaterialTheme.colorScheme
     DataSection(
-        title = "Peers (${status.peers.size})",
+        title = "Peers (${peers.size})",
         header =
             "NODE".padEnd(NODE_ID_WIDTH) +
                 "STATE".padEnd(STATE_WIDTH) +
@@ -351,7 +354,7 @@ private fun MeshDetails(status: CryonetStatus) {
                 "RECEIVED".padEnd(COUNT_WIDTH) +
                 "CANDIDATE",
         rows =
-            status.peers.map { (id, conn) ->
+            peers.map { (id, conn) ->
                 DataRow(
                     text =
                         (
@@ -366,17 +369,25 @@ private fun MeshDetails(status: CryonetStatus) {
             },
         emptyText = "No full-mesh peers yet",
     )
+}
+
+@Composable
+private fun MeshRoutesSection(routes: Map<UInt, UInt>) {
     DataSection(
-        title = "Mesh routes (${status.routes.size})",
+        title = "Mesh routes (${routes.size})",
         header = "DEST".padEnd(NODE_ID_WIDTH) + "VIA",
         rows =
-            status.routes.map { (destination, nextHop) ->
+            routes.map { (destination, nextHop) ->
                 DataRow(formatNodeId(destination).padEnd(NODE_ID_WIDTH) + formatNodeId(nextHop))
             },
         emptyText = "No routes yet",
     )
+}
+
+@Composable
+private fun IgpRoutesSection(routes: List<IgpRoute>) {
     DataSection(
-        title = "IGP routes (${status.igpRoutes.size})",
+        title = "IGP routes (${routes.size})",
         header =
             "DEST".padEnd(NODE_ID_WIDTH) +
                 "VIA".padEnd(NODE_ID_WIDTH) +
@@ -385,7 +396,7 @@ private fun MeshDetails(status: CryonetStatus) {
                 "TTL".padEnd(TTL_WIDTH) +
                 "SEL",
         rows =
-            status.igpRoutes.map { route ->
+            routes.map { route ->
                 DataRow(
                     formatNodeId(route.dst).padEnd(NODE_ID_WIDTH) +
                         formatNodeId(route.from).padEnd(NODE_ID_WIDTH) +

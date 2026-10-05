@@ -48,6 +48,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Reuse the debug signing key so `assembleRelease` produces an
+            // installable APK. Release builds are AOT compiled by the installer,
+            // which is what you want when judging UI smoothness.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
