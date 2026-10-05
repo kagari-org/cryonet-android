@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,10 +16,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,11 +40,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.kagari.cryonet.ui.CryonetTheme
@@ -134,7 +139,7 @@ private fun CryonetScreen(
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxWidth(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(SectionSpacing),
         ) {
             item {
                 StatusCard(
@@ -163,7 +168,13 @@ private fun CryonetScreen(
             item { IceSection(config, update) }
             item { OptionsSection(config, update) }
             if (status.running) {
-                item { MeshDetails(status) }
+                // MeshDetails emits several cards; they live in a single lazy
+                // item, so it needs its own spacing between them.
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(SectionSpacing)) {
+                        MeshDetails(status)
+                    }
+                }
             }
         }
     }
@@ -324,60 +335,155 @@ private fun OptionsSection(
 
 @Composable
 private fun MeshDetails(status: CryonetStatus) {
-    Section("Links") {
-        if (status.links.isEmpty()) {
-            Text("No links yet")
-        } else {
-            status.links.forEach { Text(formatNodeId(it), style = MonoStyle) }
-        }
-    }
-    Section("Peers") {
-        if (status.peers.isEmpty()) {
-            Text("No full-mesh peers yet")
-        } else {
-            status.peers.forEach { (id, conn) ->
-                val state =
-                    when (conn.state) {
-                        ConnState.CONNECTING -> "connecting"
-                        ConnState.CONNECTED -> "connected"
-                        ConnState.CLOSED -> "closed"
-                        else -> "unknown"
-                    }
-                Text(
-                    "${formatNodeId(id)}  $state  " +
-                        "sent=${conn.sent} received=${conn.received}",
-                    style = MonoStyle,
+    val colorScheme = MaterialTheme.colorScheme
+    DataSection(
+        title = "Links (${status.links.size})",
+        header = "NODE",
+        rows = status.links.map { DataRow(formatNodeId(it)) },
+        emptyText = "No links yet",
+    )
+    DataSection(
+        title = "Peers (${status.peers.size})",
+        header =
+            "NODE".padEnd(NODE_ID_WIDTH) +
+                "STATE".padEnd(STATE_WIDTH) +
+                "SENT".padEnd(COUNT_WIDTH) +
+                "RECEIVED".padEnd(COUNT_WIDTH) +
+                "CANDIDATE",
+        rows =
+            status.peers.map { (id, conn) ->
+                DataRow(
+                    text =
+                        (
+                            formatNodeId(id).padEnd(NODE_ID_WIDTH) +
+                                conn.state.label().padEnd(STATE_WIDTH) +
+                                humanCount(conn.sent).padEnd(COUNT_WIDTH) +
+                                humanCount(conn.received).padEnd(COUNT_WIDTH) +
+                                conn.selectedCandidate.orEmpty()
+                        ).trimEnd(),
+                    color = conn.state.displayColor(colorScheme),
                 )
-                conn.selectedCandidate?.let {
-                    Text("  candidate: $it", style = MonoStyle)
+            },
+        emptyText = "No full-mesh peers yet",
+    )
+    DataSection(
+        title = "Mesh routes (${status.routes.size})",
+        header = "DEST".padEnd(NODE_ID_WIDTH) + "VIA",
+        rows =
+            status.routes.map { (destination, nextHop) ->
+                DataRow(formatNodeId(destination).padEnd(NODE_ID_WIDTH) + formatNodeId(nextHop))
+            },
+        emptyText = "No routes yet",
+    )
+    DataSection(
+        title = "IGP routes (${status.igpRoutes.size})",
+        header =
+            "DEST".padEnd(NODE_ID_WIDTH) +
+                "VIA".padEnd(NODE_ID_WIDTH) +
+                "METRIC".padEnd(METRIC_WIDTH) +
+                "SEQ".padEnd(SEQ_WIDTH) +
+                "TTL".padEnd(TTL_WIDTH) +
+                "SEL",
+        rows =
+            status.igpRoutes.map { route ->
+                DataRow(
+                    formatNodeId(route.dst).padEnd(NODE_ID_WIDTH) +
+                        formatNodeId(route.from).padEnd(NODE_ID_WIDTH) +
+                        "${route.metric}/${route.computedMetric}".padEnd(METRIC_WIDTH) +
+                        route.seq.toString().padEnd(SEQ_WIDTH) +
+                        "${route.timeoutRemainingMs}ms".padEnd(TTL_WIDTH) +
+                        if (route.selected) "*" else "",
+                )
+            },
+        emptyText = "No IGP routes yet",
+    )
+}
+
+private data class DataRow(
+    val text: String,
+    val color: Color? = null,
+)
+
+/**
+ * A mono-spaced table: one header line and one single line per row. Rows never
+ * wrap; the whole table scrolls horizontally when it is wider than the card.
+ */
+@Composable
+private fun DataSection(
+    title: String,
+    header: String,
+    rows: List<DataRow>,
+    emptyText: String,
+) {
+    Section(title) {
+        if (rows.isEmpty()) {
+            Text(
+                text = emptyText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = header,
+                    style = MonoLabelStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    softWrap = false,
+                    maxLines = 1,
+                )
+                rows.forEach { row ->
+                    Text(
+                        text = row.text,
+                        style = MonoBodyStyle,
+                        color = row.color ?: MaterialTheme.colorScheme.onSurface,
+                        softWrap = false,
+                        maxLines = 1,
+                    )
                 }
             }
         }
     }
-    Section("Mesh routes") {
-        if (status.routes.isEmpty()) {
-            Text("No routes yet")
-        } else {
-            status.routes.forEach { (destination, nextHop) ->
-                Text("${formatNodeId(destination)} via ${formatNodeId(nextHop)}", style = MonoStyle)
-            }
+}
+
+private fun ConnState.label(): String =
+    when (this) {
+        ConnState.CONNECTING -> "connecting"
+        ConnState.CONNECTED -> "connected"
+        ConnState.CLOSED -> "closed"
+        else -> "unknown"
+    }
+
+private fun ConnState.displayColor(colorScheme: ColorScheme): Color =
+    when (this) {
+        ConnState.CONNECTED -> colorScheme.primary
+        ConnState.CONNECTING -> colorScheme.secondary
+        ConnState.CLOSED -> colorScheme.error
+        else -> colorScheme.onSurfaceVariant
+    }
+
+/** Compact byte/packet counter: `1234` becomes `1.2k`. */
+private fun humanCount(value: ULong): String {
+    if (value < 1000UL) return value.toString()
+    val units =
+        listOf(
+            1_000_000_000UL to "G",
+            1_000_000UL to "M",
+            1000UL to "k",
+        )
+    for ((divisor, suffix) in units) {
+        if (value >= divisor) {
+            val whole = value / divisor
+            val tenth = value % divisor * 10UL / divisor
+            return "$whole.$tenth$suffix"
         }
     }
-    Section("IGP routes") {
-        if (status.igpRoutes.isEmpty()) {
-            Text("No IGP routes yet")
-        } else {
-            status.igpRoutes.forEach { route ->
-                Text(
-                    "${formatNodeId(route.dst)} via ${formatNodeId(route.from)} " +
-                        "metric=${route.metric}/${route.computedMetric} " +
-                        "seq=${route.seq} ${if (route.selected) "selected" else "active"} " +
-                        "ttl=${route.timeoutRemainingMs}ms",
-                    style = MonoStyle,
-                )
-            }
-        }
-    }
+    return value.toString()
 }
 
 @Composable
@@ -451,3 +557,17 @@ private fun ToggleRow(
 }
 
 private val MonoStyle = TextStyle(fontFamily = FontFamily.Monospace)
+
+private val MonoLabelStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+
+private val MonoBodyStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+
+private val SectionSpacing = 12.dp
+
+// Column widths for the status tables, in monospace characters.
+private const val NODE_ID_WIDTH = 12
+private const val STATE_WIDTH = 12
+private const val COUNT_WIDTH = 10
+private const val METRIC_WIDTH = 14
+private const val SEQ_WIDTH = 8
+private const val TTL_WIDTH = 14

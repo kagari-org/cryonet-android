@@ -82,13 +82,15 @@ object CryonetEngine {
             val routes = cryonet.getRoutes()
             val igpRoutes = cryonet.getIgpRoutes()
             val peers = cryonet.getFullMeshPeers()
+            // Hash maps come back in an arbitrary order; sort so the UI does
+            // not reshuffle the rows on every poll.
             _status.value =
                 CryonetStatus(
                     running = true,
-                    links = links,
-                    routes = routes,
-                    igpRoutes = igpRoutes,
-                    peers = peers,
+                    links = links.sorted(),
+                    routes = routes.toSortedMap(),
+                    igpRoutes = igpRoutes.sortedWith(compareBy({ it.dst }, { it.from })),
+                    peers = peers.toSortedMap(),
                 )
         } catch (error: Throwable) {
             _status.update { it.copy(error = error.message ?: error.toString()) }
