@@ -15,14 +15,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -99,15 +107,29 @@ private fun CryonetScreen(
 ) {
     val status by CryonetEngine.status.collectAsStateWithLifecycle()
     var config by remember { mutableStateOf(store.load()) }
+    var dirty by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     val update: (CryonetConfig) -> Unit = {
         config = it
+        dirty = true
         localError = null
-        store.save(it)
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Cryonet") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Cryonet") },
+                actions = {
+                    TextButton(
+                        onClick = {
+                            store.save(config)
+                            dirty = false
+                        },
+                        enabled = dirty,
+                    ) { Text("Save") }
+                },
+            )
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxWidth(),
@@ -118,12 +140,18 @@ private fun CryonetScreen(
                 StatusCard(
                     status = status,
                     localError = localError,
+                    unsavedChanges = dirty,
                     onStart = {
                         val error = config.validationError()
                         if (error != null) {
                             localError = error
                         } else {
                             localError = null
+                            // The service reads the configuration from
+                            // SharedPreferences, so persist the pending edits
+                            // before asking it to start.
+                            store.save(config)
+                            dirty = false
                             onStart()
                         }
                     },
@@ -145,6 +173,7 @@ private fun CryonetScreen(
 private fun StatusCard(
     status: CryonetStatus,
     localError: String?,
+    unsavedChanges: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -162,6 +191,9 @@ private fun StatusCard(
             }
             (status.error ?: localError)?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            if (unsavedChanges) {
+                Text("Unsaved changes", color = MaterialTheme.colorScheme.primary)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.Button(
@@ -182,7 +214,7 @@ private fun ConnectionSection(
     config: CryonetConfig,
     update: (CryonetConfig) -> Unit,
 ) {
-    var servers by remember { mutableStateOf(config.servers.joinToString("\n")) }
+    var servers by remember { mutableStateOf(config.servers.joinToString(", ")) }
     Section("Connection") {
         OutlinedTextField(
             value = config.nodeId.toString(),
@@ -193,12 +225,11 @@ private fun ConnectionSection(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+        MonoField(
+            label = "Token",
             value = config.token,
             onValueChange = { update(config.copy(token = it)) },
-            label = { Text("Token") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            secret = true,
         )
         MonoField(
             label = "WebSocket servers",
@@ -217,8 +248,8 @@ private fun TunnelSection(
     config: CryonetConfig,
     update: (CryonetConfig) -> Unit,
 ) {
-    var addresses by remember { mutableStateOf(config.addresses.joinToString("\n")) }
-    var routes by remember { mutableStateOf(config.routes.joinToString("\n")) }
+    var addresses by remember { mutableStateOf(config.addresses.joinToString(", ")) }
+    var routes by remember { mutableStateOf(config.routes.joinToString(", ")) }
     Section("Tunnel") {
         MonoField(
             label = "Tunnel addresses (CIDR)",
@@ -256,7 +287,7 @@ private fun IceSection(
     update: (CryonetConfig) -> Unit,
 ) {
     var iceServers by remember {
-        mutableStateOf(config.iceServers.joinToString("\n") { it.encode() })
+        mutableStateOf(config.iceServers.joinToString(", ") { it.encode() })
     }
     Section("ICE") {
         MonoField(
@@ -267,7 +298,7 @@ private fun IceSection(
                 update(config.copy(iceServers = parseIceServers(it)))
             },
             placeholder = "stun:example.com:3478",
-            supporting = "One per line, url|username|credential for TURN.",
+            secret = true,
         )
     }
 }
@@ -372,17 +403,33 @@ private fun MonoField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String? = null,
-    supporting: String? = null,
+    secret: Boolean = false,
 ) {
+    var visible by remember { mutableStateOf(false) }
+    val trailingIcon: (@Composable () -> Unit)? =
+        if (secret) {
+            {
+                IconButton(onClick = { visible = !visible }) {
+                    Icon(
+                        imageVector =
+                            if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = if (visible) "Hide" else "Show",
+                    )
+                }
+            }
+        } else {
+            null
+        }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
         placeholder = placeholder?.let { { Text(it) } },
-        supportingText = supporting?.let { { Text(it) } },
-        minLines = 2,
-        maxLines = 6,
+        singleLine = true,
         textStyle = MonoStyle,
+        visualTransformation =
+            if (secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
+        trailingIcon = trailingIcon,
         modifier = Modifier.fillMaxWidth(),
     )
 }

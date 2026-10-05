@@ -60,10 +60,10 @@ fun parseCidr(value: String): Cidr? {
 /** The bare address part of a CIDR, as the Rust side expects in `addresses`. */
 fun bareAddress(value: String): String? = parseCidr(value)?.address
 
-/** Splits free-form text on newlines, commas and whitespace. */
+/** Splits a comma (or newline) separated list. */
 fun parseList(text: String): List<String> =
     text
-        .split('\n', ',', ' ', '\t')
+        .split('\n', ',')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
 
@@ -79,7 +79,7 @@ fun parseIceServer(line: String): IceServer? {
 
 fun parseIceServers(text: String): List<IceServer> =
     text
-        .split('\n')
+        .split('\n', ',')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
         .mapNotNull(::parseIceServer)
